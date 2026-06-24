@@ -23,7 +23,7 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 cp .env.example .env
-# edit .env and add your real ANTHROPIC_API_KEY
+# edit .env and add your real GOOGLE_API_KEY
 
 uvicorn app.main:app --reload
 ```
@@ -39,7 +39,7 @@ curl -X POST http://localhost:8000/chat \
 ```
 
 You should see the agent call `calculator` for the arithmetic and `web_search`
-for the World Cup question — check the `tool_calls` field in the response.
+for the World Cup question - check the `tool_calls` field in the response.
 
 ## Run it with Docker
 
@@ -57,7 +57,7 @@ pytest
 ```
 
 `test_health` always runs. `test_chat_calculator` only runs if
-`ANTHROPIC_API_KEY` is set, since it calls the real model.
+`GOOGLE_API_KEY` is set, since it calls the real model.
 
 ## Why it's built this way (for revision later)
 
@@ -71,19 +71,19 @@ pytest
   wheel and build a custom multi-node graph by hand instead of using this helper.
 - **Extracting tool calls from the message list**: the agent returns a list
   of messages (`HumanMessage`, `AIMessage`, `ToolMessage`); the API pulls out
-  each `AIMessage.tool_calls` so you can see exactly which tools ran — useful
+  each `AIMessage.tool_calls` so you can see exactly which tools ran - useful
   for debugging now, and a preview of what you'll formalize into full
   LangSmith traces in a later phase.
 - **One safe custom tool**: the calculator uses a restricted AST evaluator
-  instead of `eval()` — a small, real example of the "don't trust model or
+  instead of `eval()` - a small, real example of the "don't trust model or
   user input blindly" mindset that becomes the guardrails phase.
 
 ## Project roadmap (where this fits)
 
 1. DONE — Phase 1 (this one): FastAPI + Pydantic + single LangChain agent + Docker
-2. Phase 2 — RAG: document upload, chunking, embeddings, Chroma vector DB
-3. Phase 3 — Multi-agent with LangGraph: supervisor + research/RAG/action agents
-4. Phase 4 — MCP: expose tools via an MCP server instead of inline functions
-5. Phase 5 — Security: guardrails (input/output checks) + gateway with model fallback
-6. Phase 6 — Observability: LangSmith tracing + an automated agent eval set
-7. Phase 7 — Ship it: Docker Compose locally, then AWS (ECS + RDS)
+2. Phase 2 - RAG: document upload, chunking, embeddings, Chroma vector DB
+3. Phase 3 - Multi-agent with LangGraph: supervisor + research/RAG/action agents
+4. Phase 4 - MCP: expose tools via an MCP server instead of inline functions
+5. Phase 5 - Security: guardrails (input/output checks) + gateway with model fallback
+6. Phase 6 - Observability: LangSmith tracing + an automated agent eval set
+7. Phase 7 - Ship it: Docker Compose locally, then AWS (ECS + RDS)
