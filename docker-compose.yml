@@ -1,0 +1,13 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - ./app:/code/app
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+# Phase 2 adds a 'vectordb' service (Chroma) here.
+# Phase 3+ adds a 'postgres' service for chat history and agent run logs.
