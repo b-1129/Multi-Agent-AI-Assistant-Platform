@@ -28,3 +28,16 @@ class HealthResponse(BaseModel):
     status:str
     app_name: str
     environment: str
+
+class DocumentUploadResponse(BaseModel):
+    filename: str
+    chunks_added: int
+
+class DocumentInfo(BaseModel):
+    filename: str
+    chunk_count: int
+    ingested_at: float
+
+class DocumentListResponse(BaseModel):
+    documents: List[DocumentInfo]
+    total_documents: int
