@@ -10,7 +10,7 @@ Three patterns are shown here on purpose:
    vector store. The agent decides for itself, per question, whether to
    search the user's uploaded documents at all -- that's what makes this
    "agentic RAG" rather than a fixed retrieve-then-answer pipeline.
-   
+
 In a later phase, these same tools get exposed behind an MCP server instead
 of being wired directly into the agent - the tool *contract* (name, schema,
 description) stays identical, only how it's transported changes.
@@ -21,6 +21,8 @@ import operator
 from langchain_community.tools import DuckDuckGoSearchRun
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
+
+from app.vectorstore import get_vectorstore
 
 _ALLOWED_OPERATORS = {
     ast.Add: operator.add,
@@ -78,5 +80,33 @@ web_search_tool = DuckDuckGoSearchRun(
     "you don't already know or that may have changed recently.",
 )
 
+class DocumentSearchInput(BaseModel):
+    query: str = Field(
+        ..., description="What to search for in the uploaded documents."
+    )
+
+
+def _search_documents(query: str) -> str:
+    vectorstore = get_vectorstore()
+    results = vectorstore.similarity_search(query, k=4)
+    if not results:
+        return "No relevant chunks found. The user may not have uploaded any documents yet."
+
+    formatted = []
+    for i, doc in enumerate(results, start=1):
+        source = doc.metadata.get("source", "unknown")
+        formatted.append(f"[{i}] (source: {source})\n{doc.page_content}")
+    return "\n\n".join(formatted)
+
+
+document_search_tool = StructuredTool.from_function(
+    func=_search_documents,
+    name="search_documents",
+    description="Search the user's uploaded documents for relevant passages. "
+    "Use this whenever the question could be answered from documents the "
+    "user has uploaded, before falling back to web_search or general knowledge.",
+    args_schema=DocumentSearchInput,
+)
+
 def get_tools():
-    return [calculator_tool, web_search_tool]
+    return [calculator_tool, web_search_tool, document_search_tool]
