@@ -1,12 +1,16 @@
 """
 Tools are how an agent reaches outside the LLM to do something real.
 
-Two patterns are shown here on purpose:
+Three patterns are shown here on purpose:
 1. 'calculator' - a custom tool with a Pydantic args schema, so you can see
    exactly how LangChain validates tool input before it ever runs.
 2. 'web_search' - an off-the-shelf community tool (DuckDuckGo, no API key
    needed), so you can see how to plug in a pre-built tool with no extra code.
-
+3. `search_documents` (added in phase 2) -- a thin wrapper around the Chroma
+   vector store. The agent decides for itself, per question, whether to
+   search the user's uploaded documents at all -- that's what makes this
+   "agentic RAG" rather than a fixed retrieve-then-answer pipeline.
+   
 In a later phase, these same tools get exposed behind an MCP server instead
 of being wired directly into the agent - the tool *contract* (name, schema,
 description) stays identical, only how it's transported changes.
