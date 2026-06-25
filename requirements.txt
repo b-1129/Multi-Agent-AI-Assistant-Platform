@@ -10,3 +10,11 @@ ddgs==9.14.4
 python-dotenv==1.2.2
 pytest==9.1.1
 httpx==0.28.1
+python-multipart==0.0.32
+
+# RAG: embeddings, vector store, chunking, PDF parsing
+langchain-chroma==1.1.0
+chromadb==1.5.9
+langchain-text-splitters==1.1.2
+fastembed==0.8.0
+pypdf==5.9.0
