@@ -21,4 +21,16 @@ class Settings(BaseSettings):
     agent_max_iteration: int = 6
     agent_verbose: bool = True
 
+    # RAG: Embeddings(local FastEmbed, No API Key) + Vector Store (Chroma)
+    embedding_model_name: str = "BAAI/bge-small-en-v1.5"
+    chroma_persist_dir: str = "./chroma_data"
+    chroma_collection_name: str = "documents"
+    chunk_size: int = 800
+    chunk_overlap: int = 100
+    retrieval_k: int = 4
+
+    # Where the document registry (filename -> chunk count) is stored.
+    # A real database takes over this job in phase 3.
+    data_dir: str="./data"
+
 settings = Settings()
