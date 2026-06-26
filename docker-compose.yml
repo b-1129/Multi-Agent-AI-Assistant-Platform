@@ -7,7 +7,12 @@ services:
       - .env
     volumes:
       - ./app:/code/app
+      - chroma_data:/code/chroma_data
+      - document_data:/code/data
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
-# Phase 2 adds a 'vectordb' service (Chroma) here.
+volumes:
+  chroma_data:
+  document_data:
+
 # Phase 3+ adds a 'postgres' service for chat history and agent run logs.
