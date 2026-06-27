@@ -108,5 +108,15 @@ document_search_tool = StructuredTool.from_function(
     args_schema=DocumentSearchInput,
 )
 
-def get_tools():
-    return [calculator_tool, web_search_tool, document_search_tool]
+def get_research_tools():
+    """Tools for the research specialist: the open web."""
+    return [web_search_tool]
+
+def get_rag_tools():
+    """Tools for the RAG specialist: the user's own uploaded documents."""
+    return [document_search_tool]
+
+def get_action_tools():
+    """Tools for the action specialist: calculations (and, in a real system,
+    calls to internal APIs -- orders, accounts, etc)."""
+    return [calculator_tool]
