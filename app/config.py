@@ -17,10 +17,6 @@ class Settings(BaseSettings):
     model_name: str = "MODEL_NAME"
     model_temperature: float = 0.2
 
-    # Agent behaviour
-    agent_max_iteration: int = 6
-    agent_verbose: bool = True
-
     # RAG: Embeddings(local FastEmbed, No API Key) + Vector Store (Chroma)
     embedding_model_name: str = "BAAI/bge-small-en-v1.5"
     chroma_persist_dir: str = "./chroma_data"
@@ -29,8 +25,14 @@ class Settings(BaseSettings):
     chunk_overlap: int = 100
     retrieval_k: int = 4
 
-    # Where the document registry (filename -> chunk count) is stored.
-    # A real database takes over this job in phase 3.
+    # Document registry (filename -> chunk count, ingestion timestamp).
+    # Still a flat JSON file, not a database -- there's no multi-user
+    # state here yet that would justify moving it to Postgres.
     data_dir: str="./data"
+
+    # Multi-agent conversation persistence (phase 3). Empty -> in-memory
+    # checkpointer, good for local trial use. Set -> Postgres-backed,
+    # durable across restarts.
+    database_url: str = ""
 
 settings = Settings()
