@@ -29,6 +29,15 @@ class HealthResponse(BaseModel):
     app_name: str
     environment: str
 
+class ConversationMessage(BaseModel):
+    role: str # Human or AI
+    content: str
+    agent_name: Optional[str] = None # Which specialist produced this, if any
+
+class SessionHistoryResponse(BaseModel):
+    session_id: str
+    messages: List[ConversationMessage]
+
 class DocumentUploadResponse(BaseModel):
     filename: str
     chunks_added: int
