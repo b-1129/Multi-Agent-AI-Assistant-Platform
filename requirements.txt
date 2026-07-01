@@ -23,3 +23,7 @@ pypdf==5.9.0
 langgraph==1.2.6
 langgraph-checkpoint-postgres==3.1.0
 psycopg[binary]==3.3.4
+
+# MCP: tool server + client adapters (phase 4)
+mcp==1.28.1
+langchain-mcp-adapters==0.3.0
