@@ -34,6 +34,15 @@ def _safe_eval(node):
         return _ALLOWED_OPERATORS[type(node.op)](_safe_eval(node.operand))
     raise ValueError("Unsupported expression")
 
+def calculate(expression: str) -> str:
+    """Evaluate a basic arithmetic expression (+, -, *, /, **, parentheses)."""
+    try:
+        tree = ast.parse(expression, mode="eval")
+        result = _safe_eval(tree.body)
+        return str(result)
+    except Exception as exc:  # noqa: BLE001 -- surface the error, don't crash
+        return f"Could not evaluate '{expression}': {exc}"
+
 def search_documents(query: str, k: int = 4) -> str:
     """Search the user's uploaded documents for relevant passages."""
     vectorstore = get_vectorstore()
