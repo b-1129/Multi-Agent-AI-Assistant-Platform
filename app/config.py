@@ -35,4 +35,12 @@ class Settings(BaseSettings):
     # durable across restarts.
     database_url: str = ""
 
+    # MCP server (phase 4): host/port are what the server itself binds to;
+    # mcp_server_url is what the agent process (the client) connects to --
+    # they differ in Docker, where the server binds 0.0.0.0 but the client
+    # reaches it by service name.
+    mcp_server_host: str = "0.0.0.0"
+    mcp_server_port: int = 8001
+    mcp_server_url: str = "http://localhost:8001/mcp"
+
 settings = Settings()
