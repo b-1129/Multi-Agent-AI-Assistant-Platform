@@ -1,19 +1,27 @@
 """
 The specialist sub-agents.
 
-Each one is its own small `create_agent` graph with exactly one tool -- the
-same pattern phase 1 and 2 used for the single agent, just narrower in scope.
-The supervisor graph (app/graph.py) treats each of these as a single node:
-it doesn't know or care that a sub-agent is itself a multi-step ReAct loop
-internally. That's the point of hierarchical multi-agent design -- nesting
-graphs inside graphs, each one a clean black box to whatever calls it.
+Each one is its own small `create_agent` graph with exactly one tool -- same
+as phase 3. What changed in phase 4: the tools themselves now come from the
+MCP server (mcp_server/server.py) instead of being imported directly as
+local Python objects. `app.mcp_client.get_tools_with_fallback()` is the one
+place that decides "MCP server, or local fallback" -- this module just asks
+for tools by name and doesn't care which transport actually served them.
+
+One real consequence of using MCP tools: they're async-only (the protocol
+is async I/O under the hood), so these sub-agents must be invoked with
+`.ainvoke()`, not `.invoke()` -- see app/graph.py, where the specialist node
+wrappers are async functions for exactly this reason. The local fallback
+tools (app/tools.py) support sync invocation too, so the system still works
+if the MCP server is down, just over a slightly different code path under
+the hood.
 """
 
 from langchain.agents import create_agent
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from app.config import settings
-from app.tools import get_research_tools, get_rag_tools, get_action_tools
+from app.mcp_client import get_tools_with_fallback
 
 _llm = ChatGoogleGenerativeAI(
     model = settings.model_name,
@@ -21,9 +29,11 @@ _llm = ChatGoogleGenerativeAI(
     api_key = settings.google_api_key,
 )
 
+_tools = get_tools_with_fallback()
+
 research_agent = create_agent(
     model=_llm,
-    tools=get_research_tools,
+    tools=[_tools["web_search"]],
     system_prompt=(
         "You are a research specialist. Use web_search to answer questions "
         "about current events, facts, or anything you're not certain about. "
@@ -33,7 +43,7 @@ research_agent = create_agent(
 
 rag_agent = create_agent(
     model=_llm,
-    tools=get_rag_tools,
+    tools=[_tools["search_documents"]],
     system_prompt=(
         "You are a document specialist. Use search_documents to answer "
         "questions about the user's uploaded files. If nothing relevant "
@@ -44,7 +54,7 @@ rag_agent = create_agent(
 
 action_agent = create_agent(
     model=_llm,
-    tools=get_action_tools(),
+    tools=[_tools["calculator"]],
     system_prompt=(
         "You are an action specialist. Use the calculator tool for any "
         "arithmetic. Be concise -- state the result, not your work."
