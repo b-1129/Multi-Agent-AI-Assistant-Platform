@@ -1,4 +1,25 @@
 services:
+  mcp-server:
+    build: .
+    ports:
+      - "8001:8001"
+    env_file:
+      - .env
+    volumes:
+      - ./app:/code/app
+      - ./mcp_server:/code/mcp_server
+      - chroma_data:/code/chroma_data
+      - document_data:/code/data
+    environment:
+      - MCP_SERVER_HOST=0.0.0.0
+      - MCP_SERVER_PORT=8001
+    command: ["python", "-m", "mcp_server.server"]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import socket; socket.create_connection(('localhost', 8001), timeout=2)\""]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   api:
     build: .
     ports:
@@ -12,8 +33,13 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      mcp-server:
+        condition: service_healthy
     environment:
       - DATABASE_URL=postgresql://agent_user:agent_password@postgres:5432/agent_platform
+      # The API container reaches the MCP server by its service name, not localhost --
+      # this is the one setting that differs between local (uvicorn --reload) and Docker.
+      - MCP_SERVER_URL=http://mcp-server:8001/mcp
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
   postgres:
