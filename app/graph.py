@@ -94,10 +94,16 @@ def _specialist_has_answered_latest_turn(messages) -> bool:
     )
 
 def _make_specialist_node(sub_agent, name: str):
-    """Wrap a compiled sub-agent graph as a single node in the parent graph."""
+    """Wrap a compiled sub-agent graph as a single node in the parent graph.
+    
+    Async because the sub-agent's tools may come from the MCP server, which
+    only supports async invocation (see app/mcp_client.py) -- ainvoke works
+    whether the underlying tool is async-only (MCP) or sync (local
+    fallback), so this one async wrapper covers both cases.
+    """
 
-    def node(state: AgentState) -> dict:
-        result = sub_agent.invoke({"messages": state["messages"]})
+    async def node(state: AgentState) -> dict:
+        result = await sub_agent.ainvoke({"messages": state["messages"]})
         sub_messages = result["messages"]
         final = sub_messages[-1]
 
