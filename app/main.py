@@ -1,9 +1,14 @@
 """
-FastAPI app: the REST interface infront of the agent.
+FastAPI app: the REST interface infront of the multi-agent graph.
 
-phase 5 puts a gateway (guardrails + fallbacks) in front of this; phase 6
-adds langsmith tracing around it. For now it's deliberately plain so the FastAPI +
-Pydantic + Langchain wiring is easy to see on its own.
+Phase 4 (MCP) means tool calls inside the graph can be async-only (when
+served over MCP), so /chat is now an async endpoint calling `ainvoke`
+instead of `invoke`. The other endpoints don't touch the agent graph, so
+they stay plain sync functions -- FastAPI runs sync and async path
+functions side by side without any special handling.
+
+Phase 5 puts a gateway (guardrails + fallback) in front of this; phase 6
+adds LangSmith tracing around it.
 """
 
 import logging
@@ -25,9 +30,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(settings.app_name)
 
 app = FastAPI(
-    title="Agent platform -- phase 3",
-    description="A supervisor + specialist multi-agent system built with LangGraph.",
-    version="0.3.0",
+    title="Agent platform -- phase 4",
+    description="A supervisor + specialist multi-agent system with tools served over MCP.",
+    version="0.4.0",
 )
 
 ALLOWED_EXTENSIONS = {".txt", ".md", ".pdf"}
@@ -71,7 +76,7 @@ def get_documents()-> DocumentListResponse:
 
 
 @app.post("/chat", response_model=ChatResponse)
-def chat(request:ChatRequest)-> ChatResponse:
+async def chat(request:ChatRequest)-> ChatResponse:
     session_id = request.session_id or str(uuid.uuid4())
     config = {
         "configurable": {"thread_id": session_id},
@@ -79,7 +84,7 @@ def chat(request:ChatRequest)-> ChatResponse:
     }
 
     try:
-        result = multi_agent_graph.invoke(
+        result = multi_agent_graph.ainvoke(
             {"messages": [HumanMessage(content=request.message)]},
             config=config
         )
@@ -100,12 +105,10 @@ def chat(request:ChatRequest)-> ChatResponse:
     except Exception as exc:
         logger.exception("Agent Execution Failed")
         raise HTTPException(status_code=502, detail=f"Agent Error: {exc}") from exc
-    
-    messages = result["messages"][-1]
 
     tool_calls = [ToolCallRecord(**record) for record in result.get("tool_calls", [])]
     
-    final_message = messages[-1]
+    final_message = result["messages"][-1]
 
     return ChatResponse(
         response=final_message.content,
