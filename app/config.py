@@ -13,8 +13,8 @@ class Settings(BaseSettings):
     environment: str = "local"
 
     # LLM provider config
-    google_api_key: str = "GOOGLE_API_KEY"
-    model_name: str = "MODEL_NAME"
+    google_api_key: str = ""
+    model_name: str = "gemini-2.5-flash"
     model_temperature: float = 0.2
 
     # RAG: Embeddings(local FastEmbed, No API Key) + Vector Store (Chroma)
@@ -42,5 +42,23 @@ class Settings(BaseSettings):
     mcp_server_host: str = "0.0.0.0"
     mcp_server_port: int = 8001
     mcp_server_url: str = "http://localhost:8001/mcp"
+
+    # AI Security / Gateway (phase 5)
+    # Fallback model: used when the primary Gemini model fails or is
+    # unavailable. Set to an Groq model (Groq is cheap and fast
+    # as a fallback) if you have an GROQ_API_KEY; leave blank to disable.
+    groq_api_key: str = ""
+    fallback_model_name: str = "llama-3.1-8b-instant"
+    primary_model_max_retries: int = 2
+
+    # Rate limiting: max requests per IP per minute.
+    rate_limit_per_minute: int = 30
+
+    # Guardrails: set to False to disable individual checks (useful for testing).
+    guardrails_enabled: bool = True
+    pii_detection_enabled: bool = True
+    injection_detection_enabled: bool = True
+    blocked_topics_enabled: bool = True
+    output_safety_enabled: bool = True
 
 settings = Settings()
