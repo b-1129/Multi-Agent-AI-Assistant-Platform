@@ -61,4 +61,13 @@ class Settings(BaseSettings):
     blocked_topics_enabled: bool = True
     output_safety_enabled: bool = True
 
+    # LangSmith tracing (phase 6)
+    # Set LANGCHAIN_TRACING_V2=true and LANGCHAIN_API_KEY to enable.
+    # LangChain/LangGraph auto-detect these env vars -- no code change needed
+    # to activate tracing, the settings below add project metadata so runs
+    # are grouped correctly in the LangSmith UI.
+    langchain_api_key: str = ""
+    langchain_project: str = "agent-platform"
+    langchain_tracing_v2: bool = False
+
 settings = Settings()
