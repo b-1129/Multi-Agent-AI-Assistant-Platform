@@ -91,7 +91,7 @@ class GuardrailResult:
     reason: Optional[str] = None
     pii_entities: List[str] = field(default_factory=list)
 
-def check_input_guardrails(input_text: str) -> GuardrailResult:
+def check_input(input_text: str) -> GuardrailResult:
     """
     Run all input guardrails on the user message.
     
