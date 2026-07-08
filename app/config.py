@@ -70,4 +70,8 @@ class Settings(BaseSettings):
     langchain_project: str = "agent-platform"
     langchain_tracing_v2: bool = False
 
+    # Agent evaluation (phase 6)
+    eval_dataset_path: str = "./evals/dataset.json"
+    eval_results_dir: str = "./evals/results"
+
 settings = Settings()
