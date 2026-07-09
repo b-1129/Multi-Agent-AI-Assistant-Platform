@@ -28,6 +28,7 @@ def get_checkpointer():
             "DATABASE_URL not set -- using in-memory checkpointer "
             "(no persistence across restarts)."
         )
+        return InMemorySaver()
 
     global _postgres_saver
     if _postgres_saver is None:
