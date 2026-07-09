@@ -7,7 +7,7 @@ an end-to-end sanity check with the real Anthropic model.
 /health needs no API key. /chat does -- this now exercises the *real*
 supervisor + specialist multi-agent graph end to end (real routing decision,
 real action_agent, real calculator tool call), so it's skipped automatically
-if ANTHROPIC_API_KEY isn't set.
+if GOOGLE_API_KEY isn't set.
 """
 
 import os
@@ -28,7 +28,7 @@ def test_health():
 
 
 @pytest.mark.skipif(
-    not os.getenv("ANTHROPIC_API_KEY"), reason="requires a real Anthropic API key"
+    not os.getenv("GOOGLE_API_KEY"), reason="requires a real Google API key"
 )
 def test_chat_calculator_end_to_end():
     """Full real run: supervisor must route to action_agent, which must call
