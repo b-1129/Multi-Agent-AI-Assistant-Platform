@@ -1,78 +1,39 @@
 """
-Tools are how an agent reaches outside the LLM to do something real.
+Local, in-process tool wrappers -- these exist as the fallback path for
+when the MCP server (mcp_server/server.py) is unreachable. See
+app.mcp_client.get_tools_with_fallback(), which is what app.agents actually
+calls.
 
-Three patterns are shown here on purpose:
-1. 'calculator' - a custom tool with a Pydantic args schema, so you can see
-   exactly how LangChain validates tool input before it ever runs.
-2. 'web_search' - an off-the-shelf community tool (DuckDuckGo, no API key
-   needed), so you can see how to plug in a pre-built tool with no extra code.
-3. `search_documents` (added in phase 2) -- a thin wrapper around the Chroma
-   vector store. The agent decides for itself, per question, whether to
-   search the user's uploaded documents at all -- that's what makes this
-   "agentic RAG" rather than a fixed retrieve-then-answer pipeline.
+The tool *logic* lives in app/core_tools.py and is shared with the MCP
+server, so these two transports (direct Python call vs MCP) never drift
+apart into two different implementations of "what calculator actually
+does."
 
-In a later phase, these same tools get exposed behind an MCP server instead
-of being wired directly into the agent - the tool *contract* (name, schema,
-description) stays identical, only how it's transported changes.
+web_search is the one exception: DuckDuckGoSearchRun is already a
+ready-made LangChain tool, so there's no separate "logic" module for it --
+app.core_tools.web_search() just calls it directly, and this module wraps
+the same underlying call for local use.
 """
-import ast
-import operator
 
 from langchain_community.tools import DuckDuckGoSearchRun
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
-from app.vectorstore import get_vectorstore
-
-_ALLOWED_OPERATORS = {
-    ast.Add: operator.add,
-    ast.Sub: operator.sub,
-    ast.Mult: operator.mul,
-    ast.Div: operator.truediv,
-    ast.Pow: operator.pow,
-    ast.USub: operator.neg
-}
-
-# The Problem: Letting an LLM evaluate math by passing a raw string to Python's built-in eval() function is a massive security risk. It allows malicious prompts to inject code that could delete files or hack the system.
-
-# The Solution: This code builds a safe math engine. It uses Python's ast (Abstract Syntax Tree) module to break a math string (like "2 + 3") down into a tree of structural nodes.
-
-# How it works: The _safe_eval function recursively goes through that tree. It only executes the operation if it perfectly matches the strict whitelist defined in _ALLOWED_OPERATORS (Addition, Subtraction, Multiplication, Division, Powers, and Negative numbers). Anything else throws an error.
-
-def _safe_eval(node):
-    """Evaluate a restricted arithmetic AST - never use plain eval() on user input."""
-    if isinstance(node, ast.Constant):
-        return node.value
-    if isinstance(node, ast.BinOp) and type(node.op) in _ALLOWED_OPERATORS:
-        return _ALLOWED_OPERATORS[type(node.op)](
-            _safe_eval(node.left), _safe_eval(node.right)
-        )
-    if isinstance(node, ast.UnaryOp) and type(node.op) in _ALLOWED_OPERATORS:
-        return _ALLOWED_OPERATORS[type(node.op)](
-            _safe_eval(node.operand)
-        )
-    raise ValueError("Unsupported Expression")
+from app.core_tools import calculate, search_documents
 
 
 class CalculatorInput(BaseModel):
-    expression: str= Field(..., description= "A basic arithmetic operation. e.g '11 * (3 + 4)'.")
+    expression: str = Field(
+        ..., description="A basic arithmetic expression, e.g. '12 * (3 + 4)'."
+    )
 
-def _calculate(expression:str)->str:
-    try:
-        tree = ast.parse(expression, mode="eval")
-        result = _safe_eval(tree.body)
-        return str(result)
-    except Exception as exc: # surface the error to the agent, not a crash
-        return f"Could not evaluate {expression} : {exc}"
-    
+
 calculator_tool = StructuredTool.from_function(
-    func=_calculate,
+    func=calculate,
     name="calculator",
     description="Evaluate a basic arithmetic expression (+, -, *, /, **, parentheses).",
     args_schema=CalculatorInput,
 )
-
-# LangChain Packaging (StructuredTool.from_function): Converts the plain Python function into a formal LangChain tool object, explicitly attaching its name, strict Pydantic argument structure, and agent-facing instructions.
 
 web_search_tool = DuckDuckGoSearchRun(
     name="web_search",
@@ -80,43 +41,18 @@ web_search_tool = DuckDuckGoSearchRun(
     "you don't already know or that may have changed recently.",
 )
 
+
 class DocumentSearchInput(BaseModel):
     query: str = Field(
         ..., description="What to search for in the uploaded documents."
     )
 
 
-def _search_documents(query: str) -> str:
-    vectorstore = get_vectorstore()
-    results = vectorstore.similarity_search(query, k=4)
-    if not results:
-        return "No relevant chunks found. The user may not have uploaded any documents yet."
-
-    formatted = []
-    for i, doc in enumerate(results, start=1):
-        source = doc.metadata.get("source", "unknown")
-        formatted.append(f"[{i}] (source: {source})\n{doc.page_content}")
-    return "\n\n".join(formatted)
-
-
 document_search_tool = StructuredTool.from_function(
-    func=_search_documents,
+    func=search_documents,
     name="search_documents",
     description="Search the user's uploaded documents for relevant passages. "
     "Use this whenever the question could be answered from documents the "
     "user has uploaded, before falling back to web_search or general knowledge.",
     args_schema=DocumentSearchInput,
 )
-
-def get_research_tools():
-    """Tools for the research specialist: the open web."""
-    return [web_search_tool]
-
-def get_rag_tools():
-    """Tools for the RAG specialist: the user's own uploaded documents."""
-    return [document_search_tool]
-
-def get_action_tools():
-    """Tools for the action specialist: calculations (and, in a real system,
-    calls to internal APIs -- orders, accounts, etc)."""
-    return [calculator_tool]
