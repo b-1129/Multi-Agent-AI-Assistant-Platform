@@ -8,7 +8,14 @@ dependency-injection seam used for embeddings in phase 2
 names here). That keeps these tests free, fast, and runnable with no
 internet access or API key, while still exercising the real graph
 topology, routing logic, and persistence behavior.
+
+Phase 4 note: specialist nodes are async (`ainvoke`) because their tools
+may come from the MCP server, which is async-only -- see app/graph.py and
+app/mcp_client.py. These tests use `asyncio.run(...)` rather than
+pytest-asyncio, just to avoid an extra dependency for a handful of tests.
 """
+
+import asyncio
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
@@ -40,18 +47,25 @@ class ScriptedSupervisorChain:
 
 class FakeSpecialist:
     """Stand-in for a compiled sub-agent: returns a fixed answer and records
-    a fake tool call, without making any real model call."""
+    a fake tool call, without making any real model call or MCP round trip.
+    Only `ainvoke` is implemented -- real MCP-backed sub-agents are
+    async-only too, so this matches the real contract."""
 
     def __init__(self, name: str, answer: str):
         self.name = name
         self.answer = answer
 
-    def invoke(self, state):
+    async def ainvoke(self, state):
         message = AIMessage(content=self.answer, name=self.name)
         message.tool_calls = [
             {"name": f"{self.name}_tool", "args": {}, "id": "fake-call-1"}
         ]
         return {"messages": state["messages"] + [message]}
+
+
+def run(coro):
+    """Small helper so each test reads like a normal sync test."""
+    return asyncio.run(coro)
 
 
 @pytest.fixture
@@ -72,7 +86,7 @@ def test_routes_to_one_specialist_then_finishes(monkeypatch, stub_specialists):
 
     graph = graph_module.build_graph()
     config = {"configurable": {"thread_id": "test-single-route"}}
-    result = graph.invoke({"messages": [HumanMessage(content="what is 6 times 7?")]}, config=config)
+    result = run(graph.ainvoke({"messages": [HumanMessage(content="what is 6 times 7?")]}, config=config))
 
     assert result["messages"][-1].content == "42"
     assert result["messages"][-1].name == "action_agent"
@@ -92,7 +106,7 @@ def test_can_route_to_multiple_specialists_in_one_turn(monkeypatch, stub_special
 
     graph = graph_module.build_graph()
     config = {"configurable": {"thread_id": "test-multi-route"}}
-    result = graph.invoke({"messages": [HumanMessage(content="calc this and look that up")]}, config=config)
+    result = run(graph.ainvoke({"messages": [HumanMessage(content="calc this and look that up")]}, config=config))
 
     specialist_names = [m.name for m in result["messages"] if isinstance(m, AIMessage)]
     assert specialist_names == ["action_agent", "research_agent"]
@@ -110,7 +124,7 @@ def test_safety_net_prevents_echoing_user_message_back(monkeypatch, stub_special
 
     graph = graph_module.build_graph()
     config = {"configurable": {"thread_id": "test-safety-net"}}
-    result = graph.invoke({"messages": [HumanMessage(content="hello?")]}, config=config)
+    result = run(graph.ainvoke({"messages": [HumanMessage(content="hello?")]}, config=config))
 
     final = result["messages"][-1]
     assert isinstance(final, AIMessage)
@@ -129,8 +143,8 @@ def test_conversation_persists_across_turns_with_same_thread_id(monkeypatch, stu
     graph = graph_module.build_graph()
     config = {"configurable": {"thread_id": "test-persistence"}}
 
-    graph.invoke({"messages": [HumanMessage(content="first question")]}, config=config)
-    result = graph.invoke({"messages": [HumanMessage(content="second question")]}, config=config)
+    run(graph.ainvoke({"messages": [HumanMessage(content="first question")]}, config=config))
+    result = run(graph.ainvoke({"messages": [HumanMessage(content="second question")]}, config=config))
 
     # All four messages (2 human + 2 ai) should be present -- proving the
     # checkpointer restored turn 1's history before turn 2 ran.
@@ -148,14 +162,14 @@ def test_different_thread_ids_do_not_share_history(monkeypatch, stub_specialists
 
     graph = graph_module.build_graph()
 
-    graph.invoke(
+    run(graph.ainvoke(
         {"messages": [HumanMessage(content="session A message")]},
         config={"configurable": {"thread_id": "session-a"}},
-    )
-    result_b = graph.invoke(
+    ))
+    result_b = run(graph.ainvoke(
         {"messages": [HumanMessage(content="session B message")]},
         config={"configurable": {"thread_id": "session-b"}},
-    )
+    ))
 
     # Session B should only see its own message, not session A's.
     assert len(result_b["messages"]) == 2
@@ -175,4 +189,4 @@ def test_runaway_supervisor_loop_hits_recursion_limit(monkeypatch, stub_speciali
     config = {"configurable": {"thread_id": "test-recursion"}, "recursion_limit": 8}
 
     with pytest.raises(GraphRecursionError):
-        graph.invoke({"messages": [HumanMessage(content="loop forever")]}, config=config)
+        run(graph.ainvoke({"messages": [HumanMessage(content="loop forever")]}, config=config))
