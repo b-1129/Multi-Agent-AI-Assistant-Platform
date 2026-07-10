@@ -36,3 +36,7 @@ spacy==3.8.13
 
 # LangSmith observability + agent evaluation (phase 6)
 langsmith==0.9.1
+
+# AWS deployment (phase 7)
+boto3==1.43.40
+pyyaml==6.0.3
