@@ -288,3 +288,324 @@ def ensure_security_groups(ec2, vpc_id: str, env: str, dry_run: bool) -> dict[st
                 raise
 
     return groups
+
+
+# 5. RDS PostgreSQL
+
+def ensure_rds(rds_client, vpc_info: dict, sg_id: str, env: str, dry_run: bool) -> str:
+    """
+    Create a PostgreSQL 15 RDS instance in private subnets.
+    Returns the endpoint address (empty string in dry-run mode).
+
+    Instance class: db.t3.micro (free tier eligible; upgrade to db.t3.small
+    or db.t3.medium for production workloads above light traffic).
+
+    Storage: 20 GB gp2 (auto-scales to 100 GB, no downtime).
+
+    Multi-AZ: False for cost. Enable for production by setting MultiAZ=True.
+    """
+    db_id = f"{PROJECT}-{env}"
+
+    try:
+        resp = rds_client.describe_db_instances(DBInstanceIdentifier=db_id)
+        endpoint = resp["DBInstances"][0]["Endpoint"]["Address"]
+        log(f"RDS exists: {db_id}  endpoint={endpoint}")
+        return endpoint
+    except ClientError as e:
+        if e.response["Error"]["Code"] != "DBInstanceNotFound":
+            raise
+
+    if dry_run:
+        log(f"[dry-run] Would create RDS PostgreSQL: {db_id}")
+        return ""
+
+    # Create subnet group first
+    sn_group = f"{PROJECT}-{env}"
+    try:
+        rds_client.create_db_subnet_group(
+            DBSubnetGroupName=sn_group,
+            DBSubnetGroupDescription=f"Agent Platform {env} subnet group",
+            SubnetIds=vpc_info["private_subnets"],
+            Tags=tag(env),
+        )
+        log(f"Created DB subnet group: {sn_group}")
+    except ClientError as e:
+        if "DBSubnetGroupAlreadyExists" not in str(e):
+            raise
+        log(f"DB subnet group exists: {sn_group}")
+
+    rds_client.create_db_instance(
+        DBInstanceIdentifier=db_id,
+        DBInstanceClass="db.t3.micro",
+        Engine="postgres",
+        EngineVersion="15",
+        MasterUsername="agent_user",
+        MasterUserPassword="CHANGE_ME_IN_SECRETS_MANAGER",
+        DBName="agent_platform",
+        AllocatedStorage=20,
+        StorageType="gp2",
+        StorageEncrypted=True,
+        MultiAZ=False,
+        PubliclyAccessible=False,
+        VpcSecurityGroupIds=[sg_id],
+        DBSubnetGroupName=sn_group,
+        BackupRetentionPeriod=7,       # 7 days of automatic backups
+        DeletionProtection=True,       # prevents accidental deletion
+        Tags=tag(env),
+    )
+
+    log(f"RDS instance creating (this takes ~5 minutes): {db_id}")
+
+    def rds_available():
+        resp = rds_client.describe_db_instances(DBInstanceIdentifier=db_id)
+        status = resp["DBInstances"][0]["DBInstanceStatus"]
+        log(f"  RDS status: {status}")
+        return status == "available"
+
+    wait("RDS instance available", rds_available, timeout=600, interval=30)
+
+    resp = rds_client.describe_db_instances(DBInstanceIdentifier=db_id)
+    endpoint = resp["DBInstances"][0]["Endpoint"]["Address"]
+    log(f"RDS ready: {endpoint}")
+    return endpoint
+
+
+# 6. ECS cluster + task definition + service
+
+def ensure_ecs(ecs_client, vpc_info: dict, sg_id: str, alb_tg_arn: str,
+               account_id: str, region: str, env: str, image_tag: str, dry_run: bool) -> None:
+    cluster = f"{PROJECT}-{env}"
+
+    # Cluster
+    try:
+        ecs_client.describe_clusters(clusters=[cluster])
+        log(f"ECS cluster exists: {cluster}")
+    except Exception:
+        if not dry_run:
+            ecs_client.create_cluster(
+                clusterName=cluster,
+                capacityProviders=["FARGATE", "FARGATE_SPOT"],
+                tags=[{"key": k, "value": v} for tag_d in tag(env) for k, v in [list(tag_d.items())[0], list(tag_d.items())[1]]],
+            )
+            log(f"Created ECS cluster: {cluster}")
+
+    # Task definition from template
+    task_def_path = PROJECT_ROOT / "deploy" / "task-definitions" / "api.json"
+    task_def_raw = task_def_path.read_text()
+    task_def_raw = (
+        task_def_raw
+        .replace("${AWS_ACCOUNT_ID}", account_id)
+        .replace("${AWS_REGION}", region)
+        .replace("${IMAGE_TAG}", image_tag)
+    )
+    task_def = json.loads(task_def_raw)
+
+    if not dry_run:
+        resp = ecs_client.register_task_definition(**task_def)
+        revision = resp["taskDefinition"]["revision"]
+        family = task_def["family"]
+        log(f"Registered task definition: {family}:{revision}")
+    else:
+        log(f"[dry-run] Would register task definition: {task_def['family']}")
+        return
+
+    # Service (create or update)
+    service_name = f"{PROJECT}-api-{env}"
+    try:
+        ecs_client.describe_services(cluster=cluster, services=[service_name])
+        ecs_client.update_service(
+            cluster=cluster,
+            service=service_name,
+            taskDefinition=f"{task_def['family']}:{revision}",
+            forceNewDeployment=True,
+        )
+        log(f"Updated ECS service: {service_name}")
+    except ClientError:
+        ecs_client.create_service(
+            cluster=cluster,
+            serviceName=service_name,
+            taskDefinition=f"{task_def['family']}:{revision}",
+            desiredCount=1,
+            launchType="FARGATE",
+            networkConfiguration={
+                "awsvpcConfiguration": {
+                    "subnets": vpc_info["private_subnets"],
+                    "securityGroups": [sg_id],
+                    "assignPublicIp": "DISABLED",
+                }
+            },
+            loadBalancers=[{
+                "targetGroupArn": alb_tg_arn,
+                "containerName": "api",
+                "containerPort": 8000,
+            }],
+            deploymentConfiguration={
+                "minimumHealthyPercent": 100,
+                "maximumPercent": 200,
+            },
+        )
+        log(f"Created ECS service: {service_name}")
+
+
+# 7. ALB
+
+def ensure_alb(elb_client, vpc_info: dict, sg_id: str, env: str, dry_run: bool) -> tuple[str, str]:
+    """Create ALB + target group + listener. Returns (alb_dns, target_group_arn)."""
+    alb_name = f"{PROJECT}-{env}"
+
+    if dry_run:
+        log(f"[dry-run] Would create ALB: {alb_name}")
+        return ("alb-dryrun.us-east-1.elb.amazonaws.com", "arn:dryrun")
+
+    existing = elb_client.describe_load_balancers(Names=[alb_name])["LoadBalancers"]
+    if existing:
+        alb_dns = existing[0]["DNSName"]
+        alb_arn = existing[0]["LoadBalancerArn"]
+        log(f"ALB exists: {alb_name}  dns={alb_dns}")
+    elif dry_run:
+        log(f"[dry-run] Would create ALB: {alb_name}")
+        return ("alb-dryrun.us-east-1.elb.amazonaws.com", "arn:dryrun")
+    else:
+        resp = elb_client.create_load_balancer(
+            Name=alb_name,
+            Subnets=vpc_info["public_subnets"],
+            SecurityGroups=[sg_id],
+            Scheme="internet-facing",
+            Type="application",
+            IpAddressType="ipv4",
+            Tags=tag(env),
+        )
+        alb_dns = resp["LoadBalancers"][0]["DNSName"]
+        alb_arn = resp["LoadBalancers"][0]["LoadBalancerArn"]
+        log(f"Created ALB: {alb_name}  dns={alb_dns}")
+
+    # Target group
+    tg_name = f"{PROJECT}-api-{env}"
+    existing_tgs = elb_client.describe_target_groups(Names=[tg_name])["TargetGroups"]
+    if existing_tgs:
+        tg_arn = existing_tgs[0]["TargetGroupArn"]
+        log(f"Target group exists: {tg_name}")
+    elif not dry_run:
+        tg_resp = elb_client.create_target_group(
+            Name=tg_name,
+            Protocol="HTTP",
+            Port=8000,
+            VpcId=vpc_info["vpc_id"],
+            TargetType="ip",
+            HealthCheckPath="/health",
+            HealthCheckIntervalSeconds=30,
+            HealthCheckTimeoutSeconds=5,
+            HealthyThresholdCount=2,
+            UnhealthyThresholdCount=3,
+        )
+        tg_arn = tg_resp["TargetGroups"][0]["TargetGroupArn"]
+        log(f"Created target group: {tg_name}")
+    else:
+        tg_arn = "arn:dryrun-tg"
+
+    # Listener (port 80 -> target group) -- only add when creating from scratch
+    if not dry_run and not existing:
+        try:
+            elb_client.create_listener(
+                LoadBalancerArn=alb_arn,
+                Protocol="HTTP",
+                Port=80,
+                DefaultActions=[{"Type": "forward", "TargetGroupArn": tg_arn}],
+            )
+            log("Created ALB listener: port 80 -> target group")
+        except ClientError as e:
+            if "DuplicateListener" not in str(e):
+                raise
+            log("ALB listener exists")
+
+    return alb_dns, tg_arn
+
+
+# Main entry point
+
+
+def deploy(env: str, image_tag: str, dry_run: bool, api_keys: dict) -> None:
+    region       = os.environ.get("AWS_REGION", "us-east-1")
+    account_id   = os.environ.get("AWS_ACCOUNT_ID")
+
+    if not account_id and not dry_run:
+        # Auto-detect from STS if not explicitly set
+        sts = boto3.client("sts", region_name=region)
+        account_id = sts.get_caller_identity()["Account"]
+        log(f"Auto-detected AWS account: {account_id}")
+
+    account_id = account_id or "123456789012"  # placeholder for dry-run
+
+    log(f"Starting {'[DRY RUN] ' if dry_run else ''}deployment: env={env}, image={image_tag}, region={region}")
+
+    ecr     = boto3.client("ecr",            region_name=region)
+    sm      = boto3.client("secretsmanager", region_name=region)
+    ec2     = boto3.client("ec2",            region_name=region)
+    rds_c   = boto3.client("rds",            region_name=region)
+    ecs_c   = boto3.client("ecs",            region_name=region)
+    elb_c   = boto3.client("elbv2",          region_name=region)
+
+    # 1. ECR
+    log("\n=== Step 1/7: ECR repositories ===")
+    ecr_repos = ensure_ecr_repos(ecr, account_id, region, dry_run)
+    log(f"ECR repos: {list(ecr_repos.keys())}")
+
+    # 2. Secrets
+    log("\n=== Step 2/7: Secrets Manager ===")
+    ensure_secrets(sm, region, account_id, env, dry_run, api_keys)
+
+    # 3. VPC
+    log("\n=== Step 3/7: VPC + subnets ===")
+    vpc_info = ensure_vpc(ec2, env, dry_run)
+
+    # 4. Security groups
+    log("\n=== Step 4/7: Security groups ===")
+    sgs = ensure_security_groups(ec2, vpc_info["vpc_id"], env, dry_run)
+
+    # 5. RDS
+    log("\n=== Step 5/7: RDS PostgreSQL ===")
+    rds_endpoint = ensure_rds(rds_c, vpc_info, sgs["rds"], env, dry_run)
+
+    # 6. ALB
+    log("\n=== Step 6/7: Application Load Balancer ===")
+    alb_dns, tg_arn = ensure_alb(elb_c, vpc_info, sgs["alb"], env, dry_run)
+
+    # 7. ECS
+    log("\n=== Step 7/7: ECS cluster + service ===")
+    ensure_ecs(ecs_c, vpc_info, sgs["ecs"], tg_arn, account_id, region, env, image_tag, dry_run)
+
+    log("\n" + "=" * 60)
+    log(f"Deployment {'plan (dry-run)' if dry_run else 'COMPLETE'}")
+    log(f"  API endpoint : http://{alb_dns}/docs")
+    log(f"  Health check : http://{alb_dns}/health")
+    if rds_endpoint:
+        log(f"  RDS endpoint : {rds_endpoint}:5432")
+    log("=" * 60)
+
+    if not dry_run and rds_endpoint:
+        log("\nNEXT STEP: Update the DATABASE_URL secret in Secrets Manager:")
+        log(f"  aws secretsmanager put-secret-value \\")
+        log(f"    --secret-id agent-platform/database-url \\")
+        log(f"    --secret-string 'postgresql://agent_user:PASSWORD@{rds_endpoint}:5432/agent_platform'")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Deploy agent-platform to AWS ECS")
+    parser.add_argument("--env",       default="production", help="Environment name (production/staging)")
+    parser.add_argument("--image-tag", default="latest",     help="Docker image tag to deploy")
+    parser.add_argument("--dry-run",   action="store_true",  help="Print plan without making changes")
+    parser.add_argument("--anthropic-key", default=os.environ.get("ANTHROPIC_API_KEY", ""), help="Anthropic API key")
+    parser.add_argument("--openai-key",    default=os.environ.get("OPENAI_API_KEY", ""),    help="OpenAI API key")
+    parser.add_argument("--langchain-key", default=os.environ.get("LANGCHAIN_API_KEY", ""), help="LangSmith API key")
+    args = parser.parse_args()
+
+    deploy(
+        env=args.env,
+        image_tag=args.image_tag,
+        dry_run=args.dry_run,
+        api_keys={
+            "anthropic": args.anthropic_key,
+            "openai":    args.openai_key,
+            "langchain": args.langchain_key,
+        },
+    )
