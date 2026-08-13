@@ -19,7 +19,7 @@ from pypdf import PdfReader
 from app.config import settings
 from app.vectorstore import get_vectorstore
 
-def _registry_path():
+def _registry_path() -> Path:
     return Path(settings.data_dir) / "document_registry.json"
 
 def _read_text_from_file(path:Path)-> str:
@@ -68,7 +68,7 @@ def ingest_file(path:Path, filename:str)-> dict:
         "chunk_count": len(documents),
         "ingested_at": time.time(),
     }
-    _save_registry()
+    _save_registry(registry)
 
     return {"filename": filename, "chunks_added": len(documents)}
 
