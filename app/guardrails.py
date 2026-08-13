@@ -91,13 +91,14 @@ class GuardrailResult:
     reason: Optional[str] = None
     pii_entities: List[str] = field(default_factory=list)
 
-def check_input(input_text: str) -> GuardrailResult:
-    """
-    Run all input guardrails on the user message.
+# Public API
+
+def check_input(text: str) -> GuardrailResult:
+    """Run all enabled input guardrails on a user message.
     
-    Return a GuardrailResult where `blocked=True` means the request
-    should not be forwarded to the agent. Check run in cheapest first
-    order, (Regex before pattern recognizers) so that expensive work is
+    Returns a GuardrailResult where `blocked=True` means the request
+    should not be forwarded to the agent. Checks run in cheapest-first
+    order (regex before pattern recognizers) so that expensive work is
     skipped as soon as a block is found.
     """
 
@@ -106,26 +107,26 @@ def check_input(input_text: str) -> GuardrailResult:
     
     if settings.injection_detection_enabled:
         for pattern in _INJECTION_PATTERNS:
-            if re.search(pattern, input_text, re.IGNORECASE):
-                logger.warning(f"Input guardrail blocked due to injection pattern: {pattern}")
+            if re.search(pattern, text, re.IGNORECASE):
+                logger.warning("Prompt injection attempt blocked: %r", text[:80])
                 return GuardrailResult(
                     blocked=True,
-                    reason="Your message appears to contain a prompt injection attempt and cannot be processed."
+                    reason="Your message appears to contain a prompt injection attempt and cannot be processed.",
                 )
     
     if settings.blocked_topics_enabled:
         for pattern in _BLOCKED_PATTERNS:
-            if re.search(pattern, input_text, re.IGNORECASE):
-                logger.warning(f"Input guardrail blocked due to blocked topic pattern: {pattern}")
+            if re.search(pattern, text, re.IGNORECASE):
+                logger.warning("Blocked topic detected: %r", text[:80])
                 return GuardrailResult(
                     blocked=True,
-                    reason="Your message appears to contain a blocked topic and cannot be processed."
+                    reason="Your message contains a topic this assistant is not able to help with.",
                 )
             
     if settings.pii_detection_enabled:
         entities_found = []
         for recognizer in _PII_RECOGNIZERS:
-            results = recognizer.analyze(text=input_text, entities=[recognizer.supported_entities[0]])
+            results = recognizer.analyze(text=text, entities=[recognizer.supported_entities[0]])
             if results:
                 entities_found.append(recognizer.supported_entities[0])
 
