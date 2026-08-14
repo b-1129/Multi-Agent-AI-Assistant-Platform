@@ -19,7 +19,7 @@ Prerequisites:
     pip install boto3
     AWS credentials configured: aws configure  (or IAM role if running in CI)
     Required env vars set (or passed via --):
-        AWS_ACCOUNT_ID, AWS_REGION, ANTHROPIC_API_KEY
+        AWS_ACCOUNT_ID, AWS_REGION, GOOGLE_API_KEY
 
 What this script does (in order):
     1.  ECR: create repositories for api and mcp-server images (idempotent)
@@ -102,8 +102,8 @@ def ensure_ecr_repos(ecr, account_id: str, region: str, dry_run: bool) -> dict[s
 def ensure_secrets(sm, region: str, account_id: str, env: str, dry_run: bool, api_keys: dict) -> dict[str, str]:
     """Store secrets in Secrets Manager. Skips if the secret already exists."""
     secrets_to_create = {
-        f"{PROJECT}/anthropic-api-key": api_keys.get("anthropic") or "REPLACE_ME",
-        f"{PROJECT}/openai-api-key":    api_keys.get("openai")    or "REPLACE_ME",
+        f"{PROJECT}/google-api-key": api_keys.get("google") or "REPLACE_ME",
+        f"{PROJECT}/groq-api-key":    api_keys.get("groq")    or "REPLACE_ME",
         f"{PROJECT}/langchain-api-key": api_keys.get("langchain") or "REPLACE_ME",
         # DATABASE_URL is written by the RDS step after the DB is created
     }
@@ -594,8 +594,8 @@ if __name__ == "__main__":
     parser.add_argument("--env",       default="production", help="Environment name (production/staging)")
     parser.add_argument("--image-tag", default="latest",     help="Docker image tag to deploy")
     parser.add_argument("--dry-run",   action="store_true",  help="Print plan without making changes")
-    parser.add_argument("--anthropic-key", default=os.environ.get("ANTHROPIC_API_KEY", ""), help="Anthropic API key")
-    parser.add_argument("--openai-key",    default=os.environ.get("OPENAI_API_KEY", ""),    help="OpenAI API key")
+    parser.add_argument("--google-key", default=os.environ.get("GOOGLE_API_KEY", ""), help="Google API key")
+    parser.add_argument("--groq-key",    default=os.environ.get("GROQ_API_KEY", ""),    help="Groq API key")
     parser.add_argument("--langchain-key", default=os.environ.get("LANGCHAIN_API_KEY", ""), help="LangSmith API key")
     args = parser.parse_args()
 
@@ -604,8 +604,8 @@ if __name__ == "__main__":
         image_tag=args.image_tag,
         dry_run=args.dry_run,
         api_keys={
-            "anthropic": args.anthropic_key,
-            "openai":    args.openai_key,
+            "google": args.google_key,
+            "groq":    args.groq_key,
             "langchain": args.langchain_key,
         },
     )
