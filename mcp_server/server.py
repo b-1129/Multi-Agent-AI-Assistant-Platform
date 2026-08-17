@@ -57,4 +57,4 @@ if __name__ == "__main__":
         settings.mcp_server_host,
         settings.mcp_server_port,
     )
-    mcp.run(transport= "streamable-http", path="/mcp")
+    mcp.run(transport= "streamable-http")
