@@ -26,16 +26,16 @@
       ],
       "secrets": [
         {
-          "name": "ANTHROPIC_API_KEY",
-          "valueFrom": "arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:agent-platform/anthropic-api-key"
+          "name": "GOOGLE_API_KEY",
+          "valueFrom": "arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:agent-platform/google-api-key"
         },
         {
           "name": "DATABASE_URL",
           "valueFrom": "arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:agent-platform/database-url"
         },
         {
-          "name": "OPENAI_API_KEY",
-          "valueFrom": "arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:agent-platform/openai-api-key"
+          "name": "GROQ_API_KEY",
+          "valueFrom": "arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:agent-platform/groq-api-key"
         },
         {
           "name": "LANGCHAIN_API_KEY",
