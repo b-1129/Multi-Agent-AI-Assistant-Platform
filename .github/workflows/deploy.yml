@@ -1,0 +1,143 @@
+name: CD — Deploy to AWS ECS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: production
+        type: choice
+        options: [production, staging]
+      image_tag:
+        description: "Image tag to deploy (default: git SHA)"
+        required: false
+        default: ""
+
+env:
+  AWS_REGION:    us-east-1
+  ECR_REPO_API:  agent-platform-api
+  ECR_REPO_MCP:  agent-platform-mcp
+
+jobs:
+  # Job 1: Test (reuse CI checks before any deploy)
+  test:
+    name: Test suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: pytest tests/ -v --tb=short -q
+        env:
+          GOOGLE_API_KEY: "dummy-ci-key"
+      - run: python -m evals.runner --categories security
+        env:
+          GOOGLE_API_KEY: "dummy-ci-key"
+
+  # Job 2: Build and push Docker images to ECR
+  
+  build-and-push:
+    name: Build & Push to ECR
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tag }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set image tag
+        id: meta
+        run: |
+          TAG=${{ github.event.inputs.image_tag }}
+          if [ -z "$TAG" ]; then
+            TAG=$(echo ${{ github.sha }} | cut -c1-7)
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Image tag: $TAG"
+
+      - name: Build and push API image
+        run: |
+          ECR_REGISTRY=${{ steps.ecr-login.outputs.registry }}
+          TAG=${{ steps.meta.outputs.tag }}
+          docker build \
+            -f Dockerfile.prod \
+            --target api \
+            -t $ECR_REGISTRY/$ECR_REPO_API:$TAG \
+            -t $ECR_REGISTRY/$ECR_REPO_API:latest \
+            .
+          docker push $ECR_REGISTRY/$ECR_REPO_API:$TAG
+          docker push $ECR_REGISTRY/$ECR_REPO_API:latest
+
+      - name: Build and push MCP server image
+        run: |
+          ECR_REGISTRY=${{ steps.ecr-login.outputs.registry }}
+          TAG=${{ steps.meta.outputs.tag }}
+          docker build \
+            -f Dockerfile.prod \
+            --target mcp-server \
+            -t $ECR_REGISTRY/$ECR_REPO_MCP:$TAG \
+            -t $ECR_REGISTRY/$ECR_REPO_MCP:latest \
+            .
+          docker push $ECR_REGISTRY/$ECR_REPO_MCP:$TAG
+          docker push $ECR_REGISTRY/$ECR_REPO_MCP:latest
+
+  # Job 3: Deploy to ECS (registers new task definition, forces new deployment)
+  
+  deploy:
+    name: Deploy to ECS
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'production' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install boto3
+        run: pip install boto3
+
+      - name: Deploy to ECS
+        run: |
+          python deploy/aws/deploy.py \
+            --env ${{ github.event.inputs.environment || 'production' }} \
+            --image-tag ${{ needs.build-and-push.outputs.image_tag }}
+        env:
+          AWS_REGION:     ${{ env.AWS_REGION }}
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+
+      - name: Print deployment summary
+        run: |
+          echo "✅ Deployment complete"
+          echo "   Image tag : ${{ needs.build-and-push.outputs.image_tag }}"
+          echo "   Commit    : ${{ github.sha }}"
+          echo "   Branch    : ${{ github.ref_name }}"
+          echo "   Triggered by: ${{ github.actor }}"
