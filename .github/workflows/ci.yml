@@ -1,0 +1,45 @@
+name: CI — Test
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main, staging]
+
+jobs:
+  test:
+    name: Test suite (Python 3.11)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run full test suite
+        # GOOGLE_API_KEY=dummy skips the real-model test (test_chat_calculator_end_to_end)
+        # but runs all 85 other tests including MCP subprocess tests, guardrails,
+        # gateway, eval pipeline, and graph routing.
+        run: pytest tests/ -v --tb=short -q
+        env:
+          GOOGLE_API_KEY: "dummy-ci-key-skips-real-llm-test"
+
+      - name: Run security eval cases
+        # Guardrails fire before the LLM -- these 7 cases need no real API key.
+        run: python -m evals.runner --categories security
+        env:
+          GOOGLE_API_KEY: "dummy-ci-key"
+
+      - name: Upload eval report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report-${{ github.sha }}
+          path: evals/results/
+          retention-days: 30
