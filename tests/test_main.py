@@ -2,7 +2,7 @@
 Minimal smoke tests for the core chat path. Document upload/list/search and
 the multi-agent graph's routing logic have their own dedicated test files
 (test_documents.py, test_graph.py) with isolated fakes -- this file is just
-an end-to-end sanity check with the real Anthropic model.
+an end-to-end sanity check with the real Gemini model.
 
 /health needs no API key. /chat does -- this now exercises the *real*
 supervisor + specialist multi-agent graph end to end (real routing decision,
