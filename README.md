@@ -5,7 +5,7 @@ technology is understood before the next one is layered on top.
 
 ## What's in each phase
 
-| Phase | What you built | Key technologies |
+| Phase | What I built | Key technologies |
 |-------|---------------|-----------------|
 | 1 | FastAPI REST API + single LangChain agent | FastAPI, Pydantic, LangChain, Docker |
 | 2 | RAG over uploaded documents | Chroma, FastEmbed, LangChain splitters |
@@ -58,7 +58,7 @@ python deploy/aws/push_images.py --tag $(git rev-parse --short HEAD)
 python deploy/aws/deploy.py \
   --env production \
   --image-tag $(git rev-parse --short HEAD) \
-  --anthropic-key $ANTHROPIC_API_KEY
+  --google-key $GOOGLE_API_KEY
 
 # 5. Update the DATABASE_URL secret (printed by deploy.py after RDS is ready)
 aws secretsmanager put-secret-value \
