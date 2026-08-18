@@ -1,0 +1,75 @@
+# =============================================================================
+# Multi-stage production Dockerfile
+# =============================================================================
+# Stage 1 (base): shared deps installed once, reused by both target images.
+#   -> keeps the final images lean: no duplicate pip install layers
+# Stage 2 (api): the FastAPI app
+# Stage 3 (mcp-server): the standalone MCP tool server
+#
+# Build commands:
+#   docker build --target api        -t agent-platform-api:latest .
+#   docker build --target mcp-server -t agent-platform-mcp:latest .
+#
+# In CI/CD (see .github/workflows/deploy.yml) these are built separately and
+# pushed to two ECR repositories.
+# =============================================================================
+
+FROM python:3.11-slim AS base
+
+WORKDIR /code
+
+# Install system deps needed at runtime (curl for health checks, not just build)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy and install Python dependencies before copying app code so Docker
+# can cache this layer -- a code change won't re-trigger pip install.
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Non-root user for security: ECS tasks should not run as root.
+RUN adduser --disabled-password --gecos "" appuser
+
+# =============================================================================
+FROM base AS api
+# =============================================================================
+
+COPY app ./app
+
+# Give appuser ownership of the app directory and the runtime data dirs
+# (Chroma and document registry are written here at runtime).
+RUN mkdir -p chroma_data data \
+    && chown -R appuser:appuser /code
+
+USER appuser
+
+EXPOSE 8000
+
+# Health check: ECS and the ALB both call /health to decide if the task is
+# healthy. --start-period gives the app 60 s to initialise (download FastEmbed
+# model on first start) before failures count against retries.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# 2 Uvicorn workers: safe default for a 512 MB Fargate task (1 worker per
+# 256 MB is a common rule of thumb). Increase for bigger task sizes.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+
+# =============================================================================
+FROM base AS mcp-server
+# =============================================================================
+
+COPY app ./app
+COPY mcp_server ./mcp_server
+
+RUN chown -R appuser:appuser /code
+
+USER appuser
+
+EXPOSE 8001
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
+    CMD python -c "import socket; socket.create_connection(('localhost', 8001), timeout=3)" || exit 1
+
+CMD ["python", "-m", "mcp_server.server"]

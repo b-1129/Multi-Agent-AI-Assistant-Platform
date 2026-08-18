@@ -40,6 +40,13 @@ services:
       # The API container reaches the MCP server by its service name, not localhost --
       # this is the one setting that differs between local (uvicorn --reload) and Docker.
       - MCP_SERVER_URL=http://mcp-server:8001/mcp
+      # Phase 5: guardrails on by default; set GROQ_API_KEY for model fallback.
+      - GUARDRAILS_ENABLED=true
+      - RATE_LIMIT_PER_MINUTE=30
+      # Phase 6: set LANGCHAIN_TRACING_V2=true and LANGCHAIN_API_KEY for LangSmith tracing.
+      - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2:-false}
+      - LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY:-}
+      - LANGCHAIN_PROJECT=${LANGCHAIN_PROJECT:-agent-platform}
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
   postgres:

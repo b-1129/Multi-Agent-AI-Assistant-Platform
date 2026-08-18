@@ -9,3 +9,11 @@ wheels/
 # Virtual environments
 .venv
 .env
+
+
+
+*.pyc
+.pytest_cache/
+.DS_Store
+chroma_data/
+data/
